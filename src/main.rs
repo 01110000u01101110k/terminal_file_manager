@@ -44,7 +44,9 @@ impl TargetDirectory {
 
         let data = dir.nth(self.selected).unwrap().unwrap();
 
-        self.path.push(data.path());
+        if self.path.join(data.path()).is_dir() {
+            self.path.push(data.path());
+        }
     }
 
     fn change_selected_dir_or_file(&mut self, selected: usize) {
@@ -91,15 +93,19 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                 Event::Key(key_event) => {
                     if key_event.kind == KeyEventKind::Release {
                         if key_event.code == KeyCode::Up {
-                            target_directory.change_selected_dir_or_file(target_directory.selected - 1);
+                            if target_directory.selected.checked_sub(1) != None {
+                                target_directory.change_selected_dir_or_file(target_directory.selected - 1);
                         
-                            clear(stdout);
-                            target_directory.print_dir_content();
+                                clear(stdout);
+                                target_directory.print_dir_content();
+                            }
                         } else if key_event.code == KeyCode::Down {
-                            target_directory.change_selected_dir_or_file(target_directory.selected + 1);
-    
-                            clear(stdout);
-                            target_directory.print_dir_content();
+                            if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                target_directory.change_selected_dir_or_file(target_directory.selected + 1);
+                                
+                                clear(stdout);
+                                target_directory.print_dir_content();
+                            }
                         } else if key_event.code == KeyCode::Left {
                             target_directory.to_previous_directory();
                             
