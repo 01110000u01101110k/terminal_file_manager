@@ -4,22 +4,42 @@ use crossterm::cursor::RestorePosition;
 use crossterm::execute;
 use crossterm::event::EventStream;
 use crossterm::style::ResetColor;
-use crossterm::style::{Color::{Green, Black, White, Magenta}, Colors, SetColors};
+use crossterm::style::{Color::{Green, Black, White, Magenta, Rgb}, Colors, SetColors};
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
 use crossterm::cursor::MoveTo;
 use crossterm::event::EnableMouseCapture;
+use crossterm::event::DisableMouseCapture;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::MouseEventKind;
 use crossterm::event::MouseButton;
 use crossterm::cursor::Hide;
+use crossterm::cursor::Show;
 use crossterm::event::KeyEventKind;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::LeaveAlternateScreen;
+use crossterm::terminal::BeginSynchronizedUpdate;
+use crossterm::terminal::EndSynchronizedUpdate;
+use crossterm::terminal::SetSize;
+use crossterm::style::SetStyle;
+use crossterm::style::ContentStyle;
+use crossterm::style::Attributes;
+use crossterm::style::Attribute;
 
 use std::{fs, env};
 use std::{io::Result, io::stdout, io::Stdout};
+use std::path::Path;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::string::ToString;
+use std::io::stdin;
+use std::fs::File;
+use std::fs::create_dir;
+use std::fs::remove_dir;
+use std::fs::remove_file;
+use std::thread::sleep;
+use std::time::Duration;
 
 enum ContextMenuItems {
     DeleteItem,
@@ -280,18 +300,44 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                 Event::Key(key_event) => {
                     if key_event.kind == KeyEventKind::Release {
                         if key_event.code == KeyCode::Up {
-                            if target_directory.selected.checked_sub(1) != None {
-                                target_directory.change_selected_dir_or_file(target_directory.selected - 1);
-                        
-                                clear(stdout);
-                                target_directory.print_dir_content();
+                            if target_directory.context_menu.is_open_menu {
+                                if target_directory.context_menu.selected.checked_sub(1) != None {
+                                    target_directory.context_menu.selected -= 1;
+    
+                                    clear(stdout);
+                                    target_directory.print_dir_content();
+                                    target_directory.context_menu.print_context_menu(
+                                        target_directory.context_menu.start_context_menu_column, 
+                                        target_directory.context_menu.start_context_menu_row
+                                    );
+                                }
+                            } else {
+                                if target_directory.selected.checked_sub(1) != None {
+                                    target_directory.change_selected_dir_or_file(target_directory.selected - 1);
+                            
+                                    clear(stdout);
+                                    target_directory.print_dir_content();
+                                }
                             }
                         } else if key_event.code == KeyCode::Down {
-                            if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
-                                target_directory.change_selected_dir_or_file(target_directory.selected + 1);
-                                
-                                clear(stdout);
-                                target_directory.print_dir_content();
+                            if target_directory.context_menu.is_open_menu {
+                                if target_directory.context_menu.selected + 1 < target_directory.context_menu.menu.len() {
+                                    target_directory.context_menu.selected += 1;
+                                    
+                                    clear(stdout);
+                                    target_directory.print_dir_content();
+                                    target_directory.context_menu.print_context_menu(
+                                        target_directory.context_menu.start_context_menu_column, 
+                                        target_directory.context_menu.start_context_menu_row
+                                    );
+                                }
+                            } else {
+                                if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                    target_directory.change_selected_dir_or_file(target_directory.selected + 1);
+                                    
+                                    clear(stdout);
+                                    target_directory.print_dir_content();
+                                }
                             }
                         } else if key_event.code == KeyCode::Left {
                             target_directory.to_previous_directory();
@@ -306,11 +352,191 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                             target_directory.change_selected_dir_or_file(0);
                             target_directory.print_dir_content();
                         } else if key_event.code == KeyCode::Enter {
-                            target_directory.to_next_directory();
+                            if target_directory.context_menu.is_open_menu {
+                                match target_directory.context_menu.menu[target_directory.context_menu.selected] {
+                                    ContextMenuItems::DeleteItem => {
+                                        execute!(
+                                            stdout,
+                                            MoveTo(0, 0),
+                                            EnterAlternateScreen,
+                                            DisableMouseCapture,
+                                            Show
+                                        ).unwrap();
+
+                                        let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                                        let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                                        if dir_item.path().is_dir() {
+                                            print!("ви дійсно хочете видалити дерикторію {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                                            std::io::stdout().flush().expect("Помилка при очищенні буфера");
+    
+                                            let mut entered = String::new();
+                                            stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
+
+                                            let remove_dir = remove_dir(dir_item.path().to_str().unwrap());
+
+                                            match remove_dir {
+                                                Ok(_) => {
+                                                    clear(stdout);
+                                                    println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_string_lossy().trim());
+                                                },
+                                                Err(error) => {
+                                                    clear(stdout);
+                                                    println!("error: {}", error);
+                                                }
+                                            }
+                                        } else {
+                                            print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                                            std::io::stdout().flush().expect("Помилка при очищенні буфера");
+    
+                                            let mut entered = String::new();
+                                            stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
+                                            
+                                            let remove_file = remove_file(dir_item.path().to_str().unwrap());
+
+                                            match remove_file {
+                                                Ok(_) => {
+                                                    clear(stdout);
+                                                    println!("файл {} був успішно видалений", &dir_item.file_name().to_string_lossy().trim());
+                                                },
+                                                Err(error) => {
+                                                    clear(stdout);
+                                                    println!("error: {}", error);
+                                                }
+                                            }
+                                        }
+
+                                        target_directory.context_menu.is_open_menu = false;
+
+                                        sleep(Duration::from_millis(2000));
+
+                                        execute!(
+                                            stdout,
+                                            MoveTo(0, 0),
+                                            LeaveAlternateScreen,
+                                            EnableMouseCapture, 
+                                            Hide
+                                        ).unwrap();
+
+                                        clear(stdout);
+                                        target_directory.print_dir_content();
+                                    },
+                                    ContextMenuItems::CreateDir => {
+                                        execute!(
+                                            stdout,
+                                            /*SetStyle(
+                                                ContentStyle {
+                                                    foreground_color: Some(Black),
+                                                    background_color: Some(Green),
+                                                    underline_color: None,
+                                                    attributes: Attribute::Bold.into(),
+                                                }
+                                            ),*/
+                                            MoveTo(0, 0),
+                                            EnterAlternateScreen,
+                                            DisableMouseCapture,
+                                            Show
+                                        ).unwrap();
+
+                                        print!("enter the name of the directory you want to create: ");
+                                        std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                                        let mut dir_name = String::new();
+                                        stdin().read_line(&mut dir_name).expect("something went wrong when writing the name of directory");
+
+                                        let mut patch_to_new_dir = target_directory.path.clone();
+
+                                        patch_to_new_dir.push(&dir_name);
+
+                                        let directory = create_dir(patch_to_new_dir.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new directory with the name {}", &dir_name))*/;
+                                        
+                                        match directory {
+                                            Ok(_) => {
+                                                println!("дерикторія {} була успішно створена", &dir_name.trim());
+                                            },
+                                            Err(error) => {
+                                                println!("error: {}", error);
+                                            }
+                                        }
+
+                                        target_directory.context_menu.is_open_menu = false;
+
+                                        sleep(Duration::from_millis(2000));
+
+                                        execute!(
+                                            stdout,
+                                            MoveTo(0, 0),
+                                            LeaveAlternateScreen,
+                                            EnableMouseCapture, 
+                                            Hide
+                                        ).unwrap();
+
+                                        clear(stdout);
+                                        target_directory.print_dir_content();
+                                    },
+                                    ContextMenuItems::CreateFile => {
+                                        execute!(
+                                            stdout,
+                                            MoveTo(0, 0),
+                                            EnterAlternateScreen,
+                                            DisableMouseCapture,
+                                            Show
+                                        ).unwrap();
+
+                                        print!("enter the name of the file you want to create: ");
+                                        std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                                        let mut file_name = String::new();
+                                        stdin().read_line(&mut file_name).expect("something went wrong when writing the name of file");
+
+                                        let mut patch_to_new_file = target_directory.path.clone();
+
+                                        patch_to_new_file.push(&file_name);
+
+                                        let file = File::create(&patch_to_new_file.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new file with the name {}", &file_name))*/;
+                                        
+                                        match file {
+                                            Ok(_) => {
+                                                println!("файл {} успішно створений", &file_name.trim());
+                                            },
+                                            Err(error) => {
+                                                println!("error: {}", error);
+                                            }
+                                        }
+
+                                        target_directory.context_menu.is_open_menu = false;
+
+                                        sleep(Duration::from_millis(2000));
+
+                                        execute!(
+                                            stdout,
+                                            MoveTo(0, 0),
+                                            LeaveAlternateScreen,
+                                            EnableMouseCapture, 
+                                            Hide
+                                        ).unwrap();
+
+                                        clear(stdout);
+                                        target_directory.print_dir_content();
+                                    },
+                                    ContextMenuItems::Copy => {
+
+                                    },
+                                    ContextMenuItems::Paste => {
+
+                                    },
+                                    ContextMenuItems::CutItem => {
+
+                                    }
+                                }
+                            } else {
+                                target_directory.to_next_directory();
                             
-                            clear(stdout);
-                            target_directory.change_selected_dir_or_file(0);
-                            target_directory.print_dir_content();
+                                clear(stdout);
+                                target_directory.change_selected_dir_or_file(0);
+                                target_directory.print_dir_content();
+                            }
                         } else if key_event.code == KeyCode::Esc {
                             target_directory.to_previous_directory();
                             
@@ -324,18 +550,47 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                 },
                 Event::Mouse(mouse_event) => {
                     if mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
-                        if mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
-                            target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                        if target_directory.context_menu.is_open_menu {
+                            if mouse_event.row < target_directory.context_menu.start_context_menu_row ||
+                                mouse_event.row > (
+                                    target_directory.context_menu.start_context_menu_row + 
+                                    target_directory.context_menu.menu.len() as u16 + 1
+                                ) ||
+                                mouse_event.column < target_directory.context_menu.start_context_menu_column ||
+                                mouse_event.column > (
+                                    target_directory.context_menu.start_context_menu_column + 
+                                    target_directory.context_menu.largest_element_len + 1
+                                )
+                            {
+                                target_directory.context_menu.is_open_menu = false;
+                            } else {
+                                // todo - зробити перевірку на більше/меньше ніж кількість пуктів контексного меню
 
-                            clear(stdout);
-                            target_directory.print_dir_content();
+                                if (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row)) > 0 &&
+                                    (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) < 
+                                    target_directory.context_menu.menu.len() as u16 
+                                {
+                                    target_directory.context_menu.selected = (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) as usize;
+                                }
+                                
+                            }
+                        } else {
+                            if mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                            }
                         }
+
+                        clear(stdout);
+                        target_directory.print_dir_content();
 
                         if target_directory.context_menu.is_open_menu {
-                            target_directory.context_menu.is_open_menu = false;
+                            target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
                         }
                     } else if mouse_event.kind == MouseEventKind::Up(MouseButton::Right) {
-                        if !target_directory.context_menu.is_open_menu && mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
+                        if !target_directory.context_menu.is_open_menu && 
+                            mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() &&
+                            mouse_event.row == target_directory.selected as u16
+                        {
                             target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
                         }
                         
@@ -346,7 +601,10 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
 
                                 clear(stdout);
                                 target_directory.print_dir_content();
-                                target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
+                                target_directory.context_menu.print_context_menu(
+                                    target_directory.context_menu.start_context_menu_column, 
+                                    target_directory.context_menu.start_context_menu_row
+                                );
                             }
                         } else {
                             if target_directory.selected.checked_sub(1) != None {
@@ -363,7 +621,10 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                                 
                                 clear(stdout);
                                 target_directory.print_dir_content();
-                                target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
+                                target_directory.context_menu.print_context_menu(
+                                    target_directory.context_menu.start_context_menu_column, 
+                                    target_directory.context_menu.start_context_menu_row
+                                );
                             }
                         } else {
                             if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
@@ -402,6 +663,19 @@ async fn main() -> Result<()> {
 
     execute!(
         stdout,
+        //SetSize(400, 400),
+        /*SetStyle(
+            ContentStyle {
+                foreground_color: Some(White),
+                background_color: Some(Rgb {
+                    r: 37,
+                    g: 37,
+                    b: 37,
+                }),
+                underline_color: None,
+                attributes: Attribute::Bold.into(),
+            }
+        ),*/
         EnableMouseCapture, 
         Hide
     ).unwrap();
