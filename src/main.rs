@@ -364,7 +364,7 @@ impl TargetDirectory {
             },
             "linux" => {
                 let status = Command::new("xdg-open")
-                    .arg(self.path.join(dir_item.path()).to_str().unwrap().trim())
+                    .arg(self.path.join(dir_item.path()).to_str().unwrap())
                     .status();
             },
             _ => {
