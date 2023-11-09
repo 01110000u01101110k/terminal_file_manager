@@ -45,6 +45,8 @@ use std::fs::metadata;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
+use std::process::Command;
+use std::env::consts::OS;
 
 enum ContextMenuItems {
     DeleteItem,
@@ -328,7 +330,54 @@ impl TargetDirectory {
 
             self.fixing_double_click.captured_second_click = false;
             self.fixing_double_click.captured_first_click = false;
+        } else {
+            self.open_file();
+
+            self.fixing_double_click.captured_second_click = false;
+            self.fixing_double_click.captured_first_click = false;
         }
+    }
+
+    fn open_file(&self) {
+        let mut dir = fs::read_dir(&self.path).unwrap();
+
+        let dir_item = dir.nth(self.selected).unwrap().unwrap();
+
+        match OS {
+            "windows" => {
+                let open_file = Command::new("cmd")
+                    .args(&[
+                        "/C", 
+                        "explorer", 
+                        self.path.join(dir_item.path()).to_str().unwrap()
+                    ])
+                    .status();
+
+                match open_file {
+                    Ok(open_file_result) => {
+                        println!("open_file_result {}", open_file_result);
+                    },
+                    Err(error) => {
+                        println!("error: {}", error);
+                    }
+                }
+            },
+            "linux" => {
+                let status = Command::new("xdg-open")
+                    .arg(self.path.join(dir_item.path()).to_str().unwrap().trim())
+                    .status();
+            },
+            _ => {
+                println!("операційна система не підтримується");
+            }
+        }
+
+        execute!(
+            stdout(),
+            MoveTo(0, 0),
+            EnableMouseCapture, 
+            Hide
+        ).unwrap();
     }
 
     fn change_selected_dir_or_file(&mut self, selected: usize) {
