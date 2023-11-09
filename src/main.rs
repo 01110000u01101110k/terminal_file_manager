@@ -30,6 +30,9 @@ use crossterm::style::Attribute;
 use chrono::DateTime;
 use chrono::offset::Local;
 
+use clipboard::ClipboardProvider;
+use clipboard::ClipboardContext;
+
 use std::{fs, env, error};
 use std::{io::Result, io::stdout, io::Stdout};
 use std::path::Path;
@@ -56,7 +59,8 @@ enum ContextMenuItems {
     Paste,
     CutItem,
     Rename,
-    Info
+    Info,
+    CopyPath
 }
 
 impl ToString for ContextMenuItems {
@@ -85,6 +89,9 @@ impl ToString for ContextMenuItems {
             },
             ContextMenuItems::Info => {
                 String::from("інформація про файл/папку")
+            },
+            ContextMenuItems::CopyPath => {
+                String::from("скопіювати шлях до файлу/папки в буфер обміну")
             }
         }
     }
@@ -108,9 +115,10 @@ impl ContextMenu {
             ContextMenuItems::CreateFile,
             ContextMenuItems::Copy,
             ContextMenuItems::Paste,
-            ContextMenuItems::CutItem,
+            //ContextMenuItems::CutItem,
             ContextMenuItems::Rename,
-            ContextMenuItems::Info
+            ContextMenuItems::Info,
+            ContextMenuItems::CopyPath
         ];
 
         Self {
@@ -799,6 +807,24 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     EnableMouseCapture, 
                     Hide
                 ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::CopyPath => {
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                let mut path = target_directory.path.clone();
+
+                path.push(dir_item.path());
+
+                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+
+                ctx.set_contents(String::from(path.to_str().unwrap())).unwrap();
+
+                target_directory.context_menu.is_open_menu = false;
 
                 clear(stdout);
                 target_directory.print_dir_content();
