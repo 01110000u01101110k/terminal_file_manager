@@ -4,7 +4,7 @@ use crossterm::cursor::RestorePosition;
 use crossterm::execute;
 use crossterm::event::EventStream;
 use crossterm::style::ResetColor;
-use crossterm::style::{Color::{Green, Black, White, Magenta, Rgb}, Colors, SetColors};
+use crossterm::style::{Color::{Green, Red, Black, White, Magenta, Rgb}, Colors, SetColors};
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
 use crossterm::cursor::MoveTo;
@@ -27,7 +27,10 @@ use crossterm::style::ContentStyle;
 use crossterm::style::Attributes;
 use crossterm::style::Attribute;
 
-use std::{fs, env};
+use chrono::DateTime;
+use chrono::offset::Local;
+
+use std::{fs, env, error};
 use std::{io::Result, io::stdout, io::Stdout};
 use std::path::Path;
 use std::io::{self, Write};
@@ -38,8 +41,10 @@ use std::fs::File;
 use std::fs::create_dir;
 use std::fs::remove_dir;
 use std::fs::remove_file;
+use std::fs::metadata;
 use std::thread::sleep;
 use std::time::Duration;
+use std::time::Instant;
 
 enum ContextMenuItems {
     DeleteItem,
@@ -47,7 +52,9 @@ enum ContextMenuItems {
     CreateFile,
     Copy,
     Paste,
-    CutItem
+    CutItem,
+    Rename,
+    Info
 }
 
 impl ToString for ContextMenuItems {
@@ -70,7 +77,13 @@ impl ToString for ContextMenuItems {
             },
             ContextMenuItems::CutItem => {
                 String::from("вирізати")
-            },        
+            },
+            ContextMenuItems::Rename => {
+                String::from("перейменувати")
+            },
+            ContextMenuItems::Info => {
+                String::from("інформація про файл/папку")
+            }
         }
     }
 }
@@ -79,6 +92,7 @@ struct ContextMenu {
     menu: Vec<ContextMenuItems>,
     is_open_menu: bool,
     selected: usize,
+    remember_way_to_selected_item: Option<PathBuf>,
     start_context_menu_row: u16,
     start_context_menu_column: u16,
     largest_element_len: u16,
@@ -92,13 +106,16 @@ impl ContextMenu {
             ContextMenuItems::CreateFile,
             ContextMenuItems::Copy,
             ContextMenuItems::Paste,
-            ContextMenuItems::CutItem
+            ContextMenuItems::CutItem,
+            ContextMenuItems::Rename,
+            ContextMenuItems::Info
         ];
 
         Self {
             menu,
             is_open_menu: false,
             selected: 0,
+            remember_way_to_selected_item: None,
             start_context_menu_row: 0,
             start_context_menu_column: 0,
             largest_element_len: 0,
@@ -225,10 +242,58 @@ impl ContextMenu {
     }
 }
 
+struct FixingDoubleClick {
+    allowable_time_between_clicks: Duration,
+    captured_first_click: bool,
+    captured_second_click: bool,
+    result_time_between_clicks: Option<Instant>
+}
+
+impl FixingDoubleClick {
+    fn new() -> Self {
+        Self {
+            allowable_time_between_clicks: Duration::from_millis(500),
+            captured_first_click: false,
+            captured_second_click: false,
+            result_time_between_clicks: None
+        }
+    }
+
+    fn first_click(&mut self) {
+        self.result_time_between_clicks = Some(Instant::now());
+        self.captured_first_click = true;
+    }
+
+    fn second_click(&mut self) {
+        self.captured_second_click = true;
+    }
+
+    fn check_it_is_double_click(&mut self) -> bool {
+        if self.captured_first_click && self.captured_second_click {
+            match self.result_time_between_clicks {
+                Some(result_time) => {
+                    self.captured_second_click = false;
+                    self.captured_first_click = false;
+
+                    if result_time.elapsed() <= self.allowable_time_between_clicks {
+                        return true;
+                    }
+                },
+                None => {
+                    return false;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
 struct TargetDirectory {
     path: PathBuf,
     selected: usize,
     context_menu: ContextMenu,
+    fixing_double_click: FixingDoubleClick
 }
 
 impl TargetDirectory {
@@ -239,11 +304,16 @@ impl TargetDirectory {
             path,
             selected: 0,
             context_menu: ContextMenu::new(),
+            fixing_double_click: FixingDoubleClick::new()
         }
     }
 
     fn to_previous_directory(&mut self) {
         self.path.pop();
+
+        self.change_selected_dir_or_file(0);
+        self.fixing_double_click.captured_second_click = false;
+        self.fixing_double_click.captured_first_click = false;
     }
 
     fn to_next_directory(&mut self) {
@@ -253,6 +323,11 @@ impl TargetDirectory {
 
         if self.path.join(dir_item.path()).is_dir() {
             self.path.push(dir_item.path());
+
+            self.change_selected_dir_or_file(0);
+
+            self.fixing_double_click.captured_second_click = false;
+            self.fixing_double_click.captured_first_click = false;
         }
     }
 
@@ -261,23 +336,42 @@ impl TargetDirectory {
     }
 
     fn print_dir_content(&self) {
-        for entry in fs::read_dir(&self.path).unwrap().enumerate() {
-            if let (index, Ok(entry)) = entry {
-                if index == self.selected {
-                    execute!(
-                        stdout(),
-                        SetColors(Colors::new(Black, Green))
-                    ).unwrap();
+        let dir_content = fs::read_dir(&self.path);
 
-                    println!("{}", entry.file_name().to_string_lossy());
-
-                    execute!(
-                        stdout(),
-                        ResetColor
-                    ).unwrap();
-                } else {
-                    println!("{}", entry.file_name().to_string_lossy());
+        match dir_content {
+            Ok(content) => {
+                for entry in content.enumerate() {
+                    if let (index, Ok(entry)) = entry {
+                        if index == self.selected {
+                            execute!(
+                                stdout(),
+                                SetColors(Colors::new(Black, Green))
+                            ).unwrap();
+        
+                            println!("{}", entry.file_name().to_string_lossy());
+        
+                            execute!(
+                                stdout(),
+                                ResetColor
+                            ).unwrap();
+                        } else {
+                            println!("{}", entry.file_name().to_string_lossy());
+                        }
+                    }
                 }
+            },
+            Err(error) => {
+                execute!(
+                    stdout(),
+                    SetColors(Colors::new(Black, Red))
+                ).unwrap();
+
+                println!("{}", error);
+
+                execute!(
+                    stdout(),
+                    ResetColor
+                ).unwrap();
             }
         }
     }
@@ -291,6 +385,384 @@ fn clear(stdout: &mut Stdout) {
         RestorePosition,
     ).unwrap();
 
+}
+
+fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<()> {
+    if target_directory.context_menu.is_open_menu {
+        match target_directory.context_menu.menu[target_directory.context_menu.selected] {
+            ContextMenuItems::DeleteItem => {
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    EnterAlternateScreen,
+                    DisableMouseCapture,
+                    Show
+                ).unwrap();
+
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                if dir_item.path().is_dir() {
+                    print!("ви дійсно хочете видалити дерикторію {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                    std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                    let mut entered = String::new();
+                    stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
+
+                    let remove_dir = remove_dir(dir_item.path().to_str().unwrap());
+
+                    match remove_dir {
+                        Ok(_) => {
+                            clear(stdout);
+                            println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_string_lossy().trim());
+                        },
+                        Err(error) => {
+                            clear(stdout);
+                            println!("error: {}", error);
+                        }
+                    }
+                } else {
+                    print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                    std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                    let mut entered = String::new();
+                    stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
+                    
+                    let remove_file = remove_file(dir_item.path().to_str().unwrap());
+
+                    match remove_file {
+                        Ok(_) => {
+                            clear(stdout);
+                            println!("файл {} був успішно видалений", &dir_item.file_name().to_string_lossy().trim());
+                        },
+                        Err(error) => {
+                            clear(stdout);
+                            println!("error: {}", error);
+                        }
+                    }
+                }
+
+                target_directory.context_menu.is_open_menu = false;
+
+                sleep(Duration::from_millis(2000));
+
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    LeaveAlternateScreen,
+                    EnableMouseCapture, 
+                    Hide
+                ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::CreateDir => {
+                execute!(
+                    stdout,
+                    /*SetStyle(
+                        ContentStyle {
+                            foreground_color: Some(Black),
+                            background_color: Some(Green),
+                            underline_color: None,
+                            attributes: Attribute::Bold.into(),
+                        }
+                    ),*/
+                    MoveTo(0, 0),
+                    EnterAlternateScreen,
+                    DisableMouseCapture,
+                    Show
+                ).unwrap();
+
+                print!("enter the name of the directory you want to create: ");
+                std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                let mut dir_name = String::new();
+                stdin().read_line(&mut dir_name).expect("something went wrong when writing the name of directory");
+
+                let mut patch_to_new_dir = target_directory.path.clone();
+
+                patch_to_new_dir.push(&dir_name);
+
+                let directory = create_dir(patch_to_new_dir.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new directory with the name {}", &dir_name))*/;
+                
+                match directory {
+                    Ok(_) => {
+                        println!("дерикторія {} була успішно створена", &dir_name.trim());
+                    },
+                    Err(error) => {
+                        println!("error: {}", error);
+                    }
+                }
+
+                target_directory.context_menu.is_open_menu = false;
+
+                sleep(Duration::from_millis(2000));
+
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    LeaveAlternateScreen,
+                    EnableMouseCapture, 
+                    Hide
+                ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::CreateFile => {
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    EnterAlternateScreen,
+                    DisableMouseCapture,
+                    Show
+                ).unwrap();
+
+                print!("enter the name of the file you want to create: ");
+                std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                let mut file_name = String::new();
+                stdin().read_line(&mut file_name).expect("something went wrong when writing the name of file");
+
+                let mut patch_to_new_file = target_directory.path.clone();
+
+                patch_to_new_file.push(&file_name);
+
+                let file = File::create(&patch_to_new_file.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new file with the name {}", &file_name))*/;
+                
+                match file {
+                    Ok(_) => {
+                        println!("файл {} успішно створений", &file_name.trim());
+                    },
+                    Err(error) => {
+                        println!("error: {}", error);
+                    }
+                }
+
+                target_directory.context_menu.is_open_menu = false;
+
+                sleep(Duration::from_millis(2000));
+
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    LeaveAlternateScreen,
+                    EnableMouseCapture, 
+                    Hide
+                ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::Copy => {
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                let mut path = target_directory.path.clone();
+
+                path.push(dir_item.path());
+                
+                target_directory.context_menu.remember_way_to_selected_item = Some(path);
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::Paste => {
+                let mut path = target_directory.path.clone();
+
+                let way_to_selected_item = target_directory.context_menu.remember_way_to_selected_item
+                    .clone()
+                    .unwrap();
+
+                let last_item = way_to_selected_item
+                    .iter()
+                    .last()
+                    .unwrap();
+
+                path.push(last_item);
+
+                fs::copy(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap(), path).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::CutItem => {
+
+            },
+            ContextMenuItems::Rename => {
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    EnterAlternateScreen,
+                    DisableMouseCapture,
+                    Show
+                ).unwrap();
+
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                let mut file = target_directory.path.clone();
+
+                file.push(dir_item.path());
+
+                print!("enter a new name: ");
+                std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                let mut file_name = String::new();
+                stdin().read_line(&mut file_name).expect("something went wrong when writing the name of file");
+
+                let mut file_with_new_name = target_directory.path.clone();
+
+                file_with_new_name.push(&file_name.trim());
+
+
+                let rename_result = fs::rename(file.clone(), file_with_new_name);
+
+                match rename_result {
+                    Ok(_) => {
+                        println!("файл {} успішно перейменований на {}", file.display(), file_name);
+                    },
+                    Err(error) => {
+                        println!("error: {error}");
+                    }
+                }
+
+                target_directory.context_menu.is_open_menu = false;
+
+                sleep(Duration::from_millis(2000));
+
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    LeaveAlternateScreen,
+                    EnableMouseCapture, 
+                    Hide
+                ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            },
+            ContextMenuItems::Info => {
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    EnterAlternateScreen,
+                    DisableMouseCapture,
+                    Show
+                ).unwrap();
+
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
+
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                let mut selected_item = target_directory.path.clone();
+
+                selected_item.push(dir_item.path());
+
+                let info = metadata(selected_item.clone());
+
+                match info {
+                    Ok(info) => {
+                        let item_type;
+
+                        if info.is_dir() {
+                            item_type = "dir";
+                        } else if info.is_file() {
+                            item_type = "file";
+                        } else if info.is_symlink() {
+                            item_type = "symbolic link";
+                        } else {
+                            item_type = "unknown type";
+                        }
+
+                        println!("type: {}", item_type);
+
+                        println!("----------------------------------------------------------");
+
+                        println!("path to the location: {}", selected_item.display());
+
+                        println!("----------------------------------------------------------");
+
+                        println!("size: {} bytes", info.len());
+
+                        println!("----------------------------------------------------------");
+
+                        if info.permissions().readonly() {
+                            println!("permissions: readonly");
+                        } else {
+                            println!("permissions: read and write");
+                        }
+
+                        println!("----------------------------------------------------------");
+
+                        if let Ok(time) = info.created() {
+                            let time: DateTime<Local> = time.into();
+
+                            println!("{} created: {:?}", item_type, time.to_rfc2822());
+                        } else {
+                            println!("it is impossible to determine the time of creation on this platform");
+                        }
+
+                        println!("----------------------------------------------------------");
+
+                        if let Ok(time) = info.modified() {
+                            let time: DateTime<Local> = time.into();
+
+                            println!("{} modified: {:?}", item_type, time.to_rfc2822());
+                        } else {
+                            println!("Not supported on this platform");
+                        }
+
+                        println!("----------------------------------------------------------");
+
+                        if let Ok(time) = info.accessed() {
+                            let time: DateTime<Local> = time.into();
+
+                            println!("{} accessed: {:?}", item_type, time.to_rfc2822());
+                        } else {
+                            println!("Not supported on this platform");
+                        }
+                    },
+                    Err(error) => {
+                        println!("error: {error}");
+                    }
+                }
+
+                println!("");
+                println!("");
+                println!("");
+                print!("press enter to exit back: ");
+                std::io::stdout().flush().expect("Помилка при очищенні буфера");
+
+                let mut file_name = String::new();
+                stdin().read_line(&mut file_name).expect("something went wrong when writing the name of file");
+
+                target_directory.context_menu.is_open_menu = false;
+
+                execute!(
+                    stdout,
+                    MoveTo(0, 0),
+                    LeaveAlternateScreen,
+                    EnableMouseCapture, 
+                    Hide
+                ).unwrap();
+
+                clear(stdout);
+                target_directory.print_dir_content();
+            }
+        }
+    } else {
+        target_directory.to_next_directory();
+    
+        clear(stdout);
+        target_directory.print_dir_content();
+    }
+
+    Ok(())
 }
 
 async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, target_directory: &mut TargetDirectory) -> Result<()> {
@@ -343,205 +815,18 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                             target_directory.to_previous_directory();
                             
                             clear(stdout);
-                            target_directory.change_selected_dir_or_file(0);
                             target_directory.print_dir_content();
                         } else if key_event.code == KeyCode::Right {
                             target_directory.to_next_directory();
                             
                             clear(stdout);
-                            target_directory.change_selected_dir_or_file(0);
                             target_directory.print_dir_content();
                         } else if key_event.code == KeyCode::Enter {
-                            if target_directory.context_menu.is_open_menu {
-                                match target_directory.context_menu.menu[target_directory.context_menu.selected] {
-                                    ContextMenuItems::DeleteItem => {
-                                        execute!(
-                                            stdout,
-                                            MoveTo(0, 0),
-                                            EnterAlternateScreen,
-                                            DisableMouseCapture,
-                                            Show
-                                        ).unwrap();
-
-                                        let mut dir = fs::read_dir(&target_directory.path).unwrap();
-
-                                        let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
-
-                                        if dir_item.path().is_dir() {
-                                            print!("ви дійсно хочете видалити дерикторію {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
-                                            std::io::stdout().flush().expect("Помилка при очищенні буфера");
-    
-                                            let mut entered = String::new();
-                                            stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
-
-                                            let remove_dir = remove_dir(dir_item.path().to_str().unwrap());
-
-                                            match remove_dir {
-                                                Ok(_) => {
-                                                    clear(stdout);
-                                                    println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_string_lossy().trim());
-                                                },
-                                                Err(error) => {
-                                                    clear(stdout);
-                                                    println!("error: {}", error);
-                                                }
-                                            }
-                                        } else {
-                                            print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
-                                            std::io::stdout().flush().expect("Помилка при очищенні буфера");
-    
-                                            let mut entered = String::new();
-                                            stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
-                                            
-                                            let remove_file = remove_file(dir_item.path().to_str().unwrap());
-
-                                            match remove_file {
-                                                Ok(_) => {
-                                                    clear(stdout);
-                                                    println!("файл {} був успішно видалений", &dir_item.file_name().to_string_lossy().trim());
-                                                },
-                                                Err(error) => {
-                                                    clear(stdout);
-                                                    println!("error: {}", error);
-                                                }
-                                            }
-                                        }
-
-                                        target_directory.context_menu.is_open_menu = false;
-
-                                        sleep(Duration::from_millis(2000));
-
-                                        execute!(
-                                            stdout,
-                                            MoveTo(0, 0),
-                                            LeaveAlternateScreen,
-                                            EnableMouseCapture, 
-                                            Hide
-                                        ).unwrap();
-
-                                        clear(stdout);
-                                        target_directory.print_dir_content();
-                                    },
-                                    ContextMenuItems::CreateDir => {
-                                        execute!(
-                                            stdout,
-                                            /*SetStyle(
-                                                ContentStyle {
-                                                    foreground_color: Some(Black),
-                                                    background_color: Some(Green),
-                                                    underline_color: None,
-                                                    attributes: Attribute::Bold.into(),
-                                                }
-                                            ),*/
-                                            MoveTo(0, 0),
-                                            EnterAlternateScreen,
-                                            DisableMouseCapture,
-                                            Show
-                                        ).unwrap();
-
-                                        print!("enter the name of the directory you want to create: ");
-                                        std::io::stdout().flush().expect("Помилка при очищенні буфера");
-
-                                        let mut dir_name = String::new();
-                                        stdin().read_line(&mut dir_name).expect("something went wrong when writing the name of directory");
-
-                                        let mut patch_to_new_dir = target_directory.path.clone();
-
-                                        patch_to_new_dir.push(&dir_name);
-
-                                        let directory = create_dir(patch_to_new_dir.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new directory with the name {}", &dir_name))*/;
-                                        
-                                        match directory {
-                                            Ok(_) => {
-                                                println!("дерикторія {} була успішно створена", &dir_name.trim());
-                                            },
-                                            Err(error) => {
-                                                println!("error: {}", error);
-                                            }
-                                        }
-
-                                        target_directory.context_menu.is_open_menu = false;
-
-                                        sleep(Duration::from_millis(2000));
-
-                                        execute!(
-                                            stdout,
-                                            MoveTo(0, 0),
-                                            LeaveAlternateScreen,
-                                            EnableMouseCapture, 
-                                            Hide
-                                        ).unwrap();
-
-                                        clear(stdout);
-                                        target_directory.print_dir_content();
-                                    },
-                                    ContextMenuItems::CreateFile => {
-                                        execute!(
-                                            stdout,
-                                            MoveTo(0, 0),
-                                            EnterAlternateScreen,
-                                            DisableMouseCapture,
-                                            Show
-                                        ).unwrap();
-
-                                        print!("enter the name of the file you want to create: ");
-                                        std::io::stdout().flush().expect("Помилка при очищенні буфера");
-
-                                        let mut file_name = String::new();
-                                        stdin().read_line(&mut file_name).expect("something went wrong when writing the name of file");
-
-                                        let mut patch_to_new_file = target_directory.path.clone();
-
-                                        patch_to_new_file.push(&file_name);
-
-                                        let file = File::create(&patch_to_new_file.as_path().to_str().unwrap().trim())/*.expect(&format!("something went wrong when trying to create a new file with the name {}", &file_name))*/;
-                                        
-                                        match file {
-                                            Ok(_) => {
-                                                println!("файл {} успішно створений", &file_name.trim());
-                                            },
-                                            Err(error) => {
-                                                println!("error: {}", error);
-                                            }
-                                        }
-
-                                        target_directory.context_menu.is_open_menu = false;
-
-                                        sleep(Duration::from_millis(2000));
-
-                                        execute!(
-                                            stdout,
-                                            MoveTo(0, 0),
-                                            LeaveAlternateScreen,
-                                            EnableMouseCapture, 
-                                            Hide
-                                        ).unwrap();
-
-                                        clear(stdout);
-                                        target_directory.print_dir_content();
-                                    },
-                                    ContextMenuItems::Copy => {
-
-                                    },
-                                    ContextMenuItems::Paste => {
-
-                                    },
-                                    ContextMenuItems::CutItem => {
-
-                                    }
-                                }
-                            } else {
-                                target_directory.to_next_directory();
-                            
-                                clear(stdout);
-                                target_directory.change_selected_dir_or_file(0);
-                                target_directory.print_dir_content();
-                            }
+                            enter(stdout, target_directory);
                         } else if key_event.code == KeyCode::Esc {
                             target_directory.to_previous_directory();
                             
                             clear(stdout);
-                            target_directory.change_selected_dir_or_file(0);
                             target_directory.print_dir_content();
                         } else {
                             
@@ -550,33 +835,41 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                 },
                 Event::Mouse(mouse_event) => {
                     if mouse_event.kind == MouseEventKind::Up(MouseButton::Left) {
-                        if target_directory.context_menu.is_open_menu {
-                            if mouse_event.row < target_directory.context_menu.start_context_menu_row ||
-                                mouse_event.row > (
-                                    target_directory.context_menu.start_context_menu_row + 
-                                    target_directory.context_menu.menu.len() as u16 + 1
-                                ) ||
-                                mouse_event.column < target_directory.context_menu.start_context_menu_column ||
-                                mouse_event.column > (
-                                    target_directory.context_menu.start_context_menu_column + 
-                                    target_directory.context_menu.largest_element_len + 1
-                                )
-                            {
-                                target_directory.context_menu.is_open_menu = false;
-                            } else {
-                                // todo - зробити перевірку на більше/меньше ніж кількість пуктів контексного меню
-
-                                if (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row)) > 0 &&
-                                    (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) < 
-                                    target_directory.context_menu.menu.len() as u16 
-                                {
-                                    target_directory.context_menu.selected = (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) as usize;
-                                }
-                                
-                            }
+                        if !target_directory.fixing_double_click.captured_first_click {
+                            target_directory.fixing_double_click.first_click();
                         } else {
-                            if mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
-                                target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                            target_directory.fixing_double_click.second_click();
+                        }
+
+                        if target_directory.fixing_double_click.check_it_is_double_click() {
+                            enter(stdout, target_directory);
+                        } else {
+                            if target_directory.context_menu.is_open_menu {
+                                if mouse_event.row < target_directory.context_menu.start_context_menu_row ||
+                                    mouse_event.row > (
+                                        target_directory.context_menu.start_context_menu_row + 
+                                        target_directory.context_menu.menu.len() as u16 + 1
+                                    ) ||
+                                    mouse_event.column < target_directory.context_menu.start_context_menu_column ||
+                                    mouse_event.column > (
+                                        target_directory.context_menu.start_context_menu_column + 
+                                        target_directory.context_menu.largest_element_len + 1
+                                    )
+                                {
+                                    target_directory.context_menu.is_open_menu = false;
+                                } else {
+                                    if (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row)) > 0 &&
+                                        (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) < 
+                                        target_directory.context_menu.menu.len() as u16 
+                                    {
+                                        target_directory.context_menu.selected = (mouse_event.row.saturating_sub(target_directory.context_menu.start_context_menu_row.saturating_add(1))) as usize;
+                                    }
+                                    
+                                }
+                            } else {
+                                if mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                    target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                                }
                             }
                         }
 
@@ -642,12 +935,10 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                 _ => {  }
             }
         },
-        Some(Err(_)) => {
-            
+        Some(Err(error)) => {
+            println!("error: {}", error);
         }
-        None => {
-            
-        }
+        None => {}
     }
 
     Ok(())
