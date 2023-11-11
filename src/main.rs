@@ -102,6 +102,7 @@ struct ContextMenu {
     is_open_menu: bool,
     selected: usize,
     remember_way_to_selected_item: Option<PathBuf>,
+    need_to_cut_elmenet: bool,
     start_context_menu_row: u16,
     start_context_menu_column: u16,
     largest_element_len: u16,
@@ -115,7 +116,7 @@ impl ContextMenu {
             ContextMenuItems::CreateFile,
             ContextMenuItems::Copy,
             ContextMenuItems::Paste,
-            //ContextMenuItems::CutItem,
+            ContextMenuItems::CutItem,
             ContextMenuItems::Rename,
             ContextMenuItems::Info,
             ContextMenuItems::CopyPath
@@ -126,6 +127,7 @@ impl ContextMenu {
             is_open_menu: false,
             selected: 0,
             remember_way_to_selected_item: None,
+            need_to_cut_elmenet: false,
             start_context_menu_row: 0,
             start_context_menu_column: 0,
             largest_element_len: 0,
@@ -613,7 +615,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 clear(stdout);
                 target_directory.print_dir_content();
             },
-            ContextMenuItems::Copy => {
+            ContextMenuItems::Copy => { // todo - винести в окрему функцію разом з кодом з гілки CutItem (код в обох гілках майже ідентичний)
                 let mut dir = fs::read_dir(&target_directory.path).unwrap();
 
                 let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
@@ -623,6 +625,8 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 path.push(dir_item.path());
                 
                 target_directory.context_menu.remember_way_to_selected_item = Some(path);
+
+                target_directory.context_menu.is_open_menu = false;
 
                 clear(stdout);
                 target_directory.print_dir_content();
@@ -643,11 +647,56 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
 
                 fs::copy(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap(), path).unwrap();
 
+                if target_directory.context_menu.need_to_cut_elmenet {
+                    if target_directory.context_menu.remember_way_to_selected_item.clone().unwrap().is_dir() {
+                        let remove_dir = remove_dir(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap());
+                        
+                        match remove_dir {
+                            Ok(_) => {
+                                println!("файл {} був видалений", target_directory.context_menu.need_to_cut_elmenet);
+                            },
+                            Err(error) => {
+                                eprintln!("папка {} не була видалена, по причині: {}", target_directory.context_menu.need_to_cut_elmenet, error);
+                            }
+                        }
+                    } else {
+                        let remove_file = remove_file(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap());
+                    
+                        match remove_file {
+                            Ok(_) => {
+                                println!("файл {} був видалений", target_directory.context_menu.need_to_cut_elmenet);
+                            }, 
+                            Err(error) => {
+                                eprintln!("файл {} не був видалений, по причині: {}", target_directory.context_menu.need_to_cut_elmenet, error);
+                            }
+                        }
+                    }
+
+                    target_directory.context_menu.need_to_cut_elmenet = false;
+                }
+
+                target_directory.context_menu.is_open_menu = false;
+
                 clear(stdout);
                 target_directory.print_dir_content();
             },
             ContextMenuItems::CutItem => {
+                let mut dir = fs::read_dir(&target_directory.path).unwrap();
 
+                let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
+
+                let mut path = target_directory.path.clone();
+
+                path.push(dir_item.path());
+                
+                target_directory.context_menu.remember_way_to_selected_item = Some(path);
+
+                target_directory.context_menu.need_to_cut_elmenet = true;
+
+                target_directory.context_menu.is_open_menu = false;
+
+                clear(stdout);
+                target_directory.print_dir_content();
             },
             ContextMenuItems::Rename => {
                 execute!(
