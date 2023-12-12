@@ -399,7 +399,7 @@ impl TargetDirectory {
 
         match dir_content {
             Ok(content) => {
-                for entry in content.enumerate() {
+                for entry in content.enumerate() { // todo - зробити більш гарний "ui", щось накшталт того як зробив контекстне меню (також додати якихось бордерів чи щось таке)
                     if let (index, Ok(entry)) = entry {
                         if index == self.selected {
                             execute!(
@@ -407,14 +407,14 @@ impl TargetDirectory {
                                 SetColors(Colors::new(Black, Green))
                             ).unwrap();
         
-                            println!("{}", entry.file_name().to_string_lossy());
+                            println!("{}", entry.file_name().to_str().unwrap());
         
                             execute!(
                                 stdout(),
                                 ResetColor
                             ).unwrap();
                         } else {
-                            println!("{}", entry.file_name().to_string_lossy());
+                            println!("{}", entry.file_name().to_str().unwrap());
                         }
                     }
                 }
@@ -463,7 +463,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 let dir_item = dir.nth(target_directory.selected).unwrap().unwrap();
 
                 if dir_item.path().is_dir() {
-                    print!("ви дійсно хочете видалити дерикторію {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                    print!("ви дійсно хочете видалити дерикторію {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_str().unwrap());
                     std::io::stdout().flush().expect("Помилка при очищенні буфера");
 
                     let mut entered = String::new();
@@ -474,7 +474,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     match remove_dir {
                         Ok(_) => {
                             clear(stdout);
-                            println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_string_lossy().trim());
+                            println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_str().unwrap().trim());
                         },
                         Err(error) => {
                             clear(stdout);
@@ -482,7 +482,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                         }
                     }
                 } else {
-                    print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_string_lossy());
+                    print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_str().unwrap());
                     std::io::stdout().flush().expect("Помилка при очищенні буфера");
 
                     let mut entered = String::new();
@@ -632,20 +632,89 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 target_directory.print_dir_content();
             },
             ContextMenuItems::Paste => {
-                let mut path = target_directory.path.clone();
+                let mut current_path = target_directory.path.clone();
 
-                let way_to_selected_item = target_directory.context_menu.remember_way_to_selected_item
+                let way_to_selected_item = target_directory
+                    .context_menu
+                    .remember_way_to_selected_item
                     .clone()
                     .unwrap();
 
-                let last_item = way_to_selected_item
-                    .iter()
-                    .last()
-                    .unwrap();
+                if way_to_selected_item.is_dir() {
+                    create_dir_with_content(current_path, way_to_selected_item);
 
-                path.push(last_item);
+                    fn create_dir_with_content(current_path: PathBuf, way_to_selected_item: PathBuf) {
+                        let mut current_path = current_path;
+                        let last_item = way_to_selected_item
+                            .iter()
+                            .last()
+                            .unwrap();
 
-                fs::copy(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap(), path).unwrap();
+                        current_path.push(last_item);
+
+                        let directory = create_dir(current_path.clone());
+
+                        match directory {
+                            Ok(_) => {
+                                let dir_content = fs::read_dir(&way_to_selected_item).unwrap();
+
+                                for dir_item in dir_content {
+                                    match dir_item {
+                                        Ok(item) => {
+                                            if item.path().is_dir() {
+                                                create_dir_with_content(current_path.clone(), item.path());
+                                            } else {
+                                                let mut current_path = current_path.clone();
+
+                                                current_path.push(
+                                                    item.path()
+                                                        .iter()
+                                                        .last()
+                                                        .unwrap()
+                                                );
+
+                                                let copy_file = fs::copy(&item.path(), &current_path);
+
+                                                match copy_file {
+                                                    Ok(status) => {
+                                                        println!("copy_file status: {:?}", item.path());
+                                                    },
+                                                    Err(error) => {
+                                                        eprintln!("error: {}", error);
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        Err(error) => {
+                                            println!("error: {}", error);
+                                        }
+                                    }
+                                }
+                            },
+                            Err(error) => {
+                                println!("error: {}", error);
+                            }
+                        }
+                    }
+                } else {
+                    let last_item = way_to_selected_item
+                        .iter()
+                        .last()
+                        .unwrap();
+
+                    current_path.push(last_item);
+
+                    let copy_file = fs::copy(&way_to_selected_item, &current_path);
+
+                    match copy_file {
+                        Ok(status) => {
+                            println!("copy_file status: {}", status);
+                        },
+                        Err(error) => {
+                            eprintln!("error: {}", error);
+                        }
+                    }
+                }
 
                 if target_directory.context_menu.need_to_cut_elmenet {
                     if target_directory.context_menu.remember_way_to_selected_item.clone().unwrap().is_dir() {
@@ -676,6 +745,8 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 }
 
                 target_directory.context_menu.is_open_menu = false;
+
+                sleep(Duration::from_millis(5000));
 
                 clear(stdout);
                 target_directory.print_dir_content();
