@@ -361,21 +361,14 @@ impl TargetDirectory {
                         "explorer", 
                         self.path.join(dir_item.path()).to_str().unwrap()
                     ])
-                    .status();
-
-                match open_file {
-                    Ok(open_file_result) => {
-                        println!("open_file_result {}", open_file_result);
-                    },
-                    Err(error) => {
-                        println!("error: {}", error);
-                    }
-                }
+                    .status()
+                    .expect(format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
             },
             "linux" => {
                 let status = Command::new("xdg-open")
-                    .arg(self.path.join(dir_item.path()).to_str().unwrap())
-                    .status();
+                    .arg(self.path.join(&dir_item.path()).to_str().unwrap())
+                    .status()
+                    .expect(format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
             },
             _ => {
                 println!("операційна система не підтримується");
@@ -425,7 +418,7 @@ impl TargetDirectory {
                     SetColors(Colors::new(Black, Red))
                 ).unwrap();
 
-                println!("{}", error);
+                eprintln!("{}", error);
 
                 execute!(
                     stdout(),
@@ -469,18 +462,75 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     let mut entered = String::new();
                     stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
 
-                    let remove_dir = remove_dir(dir_item.path().to_str().unwrap());
+                    let dir = fs::read_dir(&dir_item.path()).unwrap();
+                    
+                    let mut folder_hierarchy: Vec<(i32, PathBuf)> = Vec::new();
 
-                    match remove_dir {
-                        Ok(_) => {
-                            clear(stdout);
-                            println!("дерикторія {} була успішно видалена", &dir_item.file_name().to_str().unwrap().trim());
-                        },
-                        Err(error) => {
-                            clear(stdout);
-                            println!("error: {}", error);
+                    let position_in_hierarchy = 0;
+
+                    find_folders_and_delete_files_inside(dir, position_in_hierarchy, &mut folder_hierarchy);
+
+                    fn find_folders_and_delete_files_inside(dir_content: fs::ReadDir, position_in_hierarchy: i32, folder_hierarchy: &mut Vec<(i32, PathBuf)>) {
+                        for dir_item in dir_content {
+                            match dir_item {
+                                Ok(dir_item) => {
+                                    if dir_item.path().is_dir() {
+                                        folder_hierarchy.push((position_in_hierarchy, dir_item.path()));
+
+                                        match fs::read_dir(dir_item.path()) {
+                                            Ok(item) => {
+                                                find_folders_and_delete_files_inside(item, position_in_hierarchy + 1, folder_hierarchy);
+                                            },
+                                            Err(error) => {
+                                                eprintln!("error: {}", error);
+                                            }
+                                        }
+                                    } else {
+                                        let remove_file = remove_file(dir_item.path().to_str().unwrap());
+
+                                        match remove_file {
+                                            Ok(_) => {
+                                                println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
+                                            },
+                                            Err(error) => {
+                                                eprintln!("error: {}", error);
+                                            }
+                                        }
+                                    }
+                                },
+                                Err(error) => {
+                                    eprintln!("error: {}", error);
+                                }
+                            }
                         }
                     }
+
+                    folder_hierarchy.sort_by(|a, b| b.0.cmp(&a.0));
+
+                    folder_hierarchy.into_iter().for_each(|item| {
+                        let remove_dir = remove_dir(&item.1);
+
+                        match remove_dir {
+                            Ok(_) => {
+                                println!("папка {} була видалена", &item.1.to_str().unwrap());
+                            },
+                            Err(error) => {
+                                eprintln!("папка {} не була видалена, по причині: {}", &item.1.to_str().unwrap(), error);
+                            }
+                        }
+                    });
+
+                    let remove_main_selected_dir = remove_dir(&dir_item.path());
+
+                    match remove_main_selected_dir {
+                        Ok(_) => {
+                            println!("папка {} була видалена", &dir_item.path().to_str().unwrap());
+                        },
+                        Err(error) => {
+                            eprintln!("папка {} не була видалена, по причині: {}", &dir_item.path().to_str().unwrap(), error);
+                        }
+                    }
+
                 } else {
                     print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_str().unwrap());
                     std::io::stdout().flush().expect("Помилка при очищенні буфера");
@@ -493,11 +543,11 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     match remove_file {
                         Ok(_) => {
                             clear(stdout);
-                            println!("файл {} був успішно видалений", &dir_item.file_name().to_string_lossy().trim());
+                            println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
                         },
                         Err(error) => {
                             clear(stdout);
-                            println!("error: {}", error);
+                            eprintln!("error: {}", error);
                         }
                     }
                 }
@@ -551,7 +601,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                         println!("дерикторія {} була успішно створена", &dir_name.trim());
                     },
                     Err(error) => {
-                        println!("error: {}", error);
+                        eprintln!("error: {}", error);
                     }
                 }
 
@@ -596,7 +646,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                         println!("файл {} успішно створений", &file_name.trim());
                     },
                     Err(error) => {
-                        println!("error: {}", error);
+                        eprintln!("error: {}", error);
                     }
                 }
 
@@ -641,7 +691,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     .unwrap();
 
                 if way_to_selected_item.is_dir() {
-                    create_dir_with_content(current_path, way_to_selected_item);
+                    create_dir_with_content(current_path, way_to_selected_item.clone());
 
                     fn create_dir_with_content(current_path: PathBuf, way_to_selected_item: PathBuf) {
                         let mut current_path = current_path;
@@ -677,7 +727,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
 
                                                 match copy_file {
                                                     Ok(status) => {
-                                                        println!("copy_file status: {:?}", item.path());
+                                                        println!("файл {}, був успішно скопійований", &item.path().to_str().unwrap());
                                                     },
                                                     Err(error) => {
                                                         eprintln!("error: {}", error);
@@ -686,13 +736,13 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                                             }
                                         },
                                         Err(error) => {
-                                            println!("error: {}", error);
+                                            eprintln!("error: {}", error);
                                         }
                                     }
                                 }
                             },
                             Err(error) => {
-                                println!("error: {}", error);
+                                eprintln!("error: {}", error);
                             }
                         }
                     }
@@ -717,26 +767,85 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                 }
 
                 if target_directory.context_menu.need_to_cut_elmenet {
-                    if target_directory.context_menu.remember_way_to_selected_item.clone().unwrap().is_dir() {
-                        let remove_dir = remove_dir(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap());
-                        
-                        match remove_dir {
-                            Ok(_) => {
-                                println!("файл {} був видалений", target_directory.context_menu.need_to_cut_elmenet);
-                            },
-                            Err(error) => {
-                                eprintln!("папка {} не була видалена, по причині: {}", target_directory.context_menu.need_to_cut_elmenet, error);
+                    if way_to_selected_item.is_dir() {
+                        let dir_content = fs::read_dir(&way_to_selected_item).unwrap();
+
+                        let mut folder_hierarchy: Vec<(i32, PathBuf)> = Vec::new();
+
+                        let position_in_hierarchy = 0;
+
+                        find_folders_and_delete_files_inside(dir_content, position_in_hierarchy, &mut folder_hierarchy);
+
+                        fn find_folders_and_delete_files_inside(dir_content: fs::ReadDir, position_in_hierarchy: i32, folder_hierarchy: &mut Vec<(i32, PathBuf)>) {
+                            for dir_item in dir_content {
+                                match dir_item {
+                                    Ok(dir_item) => {
+                                        if dir_item.path().is_dir() {
+                                            folder_hierarchy.push((position_in_hierarchy, dir_item.path()));
+
+                                            match fs::read_dir(dir_item.path()) {
+                                                Ok(item) => {
+                                                    find_folders_and_delete_files_inside(item, position_in_hierarchy + 1, folder_hierarchy);
+                                                },
+                                                Err(error) => {
+                                                    eprintln!("error: {}", error);
+                                                }
+                                            }
+                                        } else {
+                                            let remove_file = remove_file(dir_item.path().to_str().unwrap());
+
+                                            match remove_file {
+                                                Ok(_) => {
+                                                    println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
+                                                },
+                                                Err(error) => {
+                                                    eprintln!("error: {}", error);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(error) => {
+                                        eprintln!("error: {}", error);
+                                    }
+                                }
                             }
                         }
+
+                        folder_hierarchy.sort_by(|a, b| b.0.cmp(&a.0));
+
+                        folder_hierarchy.into_iter().for_each(|item| {
+                            let remove_dir = remove_dir(&item.1);
+
+                            match remove_dir {
+                                Ok(_) => {
+                                    println!("папка {} була видалена", &item.1.to_str().unwrap());
+                                },
+                                Err(error) => {
+                                    eprintln!("папка {} не була видалена, по причині: {}", &item.1.to_str().unwrap(), error);
+                                }
+                            }
+                        });
+
+                        let remove_main_selected_dir = remove_dir(&way_to_selected_item);
+
+                        match remove_main_selected_dir {
+                            Ok(_) => {
+                                println!("папка {} була видалена", way_to_selected_item.to_str().unwrap());
+                            },
+                            Err(error) => {
+                                eprintln!("папка {} не була видалена, по причині: {}", way_to_selected_item.to_str().unwrap(), error);
+                            }
+                        }
+
                     } else {
-                        let remove_file = remove_file(target_directory.context_menu.remember_way_to_selected_item.clone().unwrap());
+                        let remove_file = remove_file(&way_to_selected_item);
                     
                         match remove_file {
                             Ok(_) => {
-                                println!("файл {} був видалений", target_directory.context_menu.need_to_cut_elmenet);
+                                println!("файл {} був видалений", way_to_selected_item.to_str().unwrap());
                             }, 
                             Err(error) => {
-                                eprintln!("файл {} не був видалений, по причині: {}", target_directory.context_menu.need_to_cut_elmenet, error);
+                                eprintln!("файл {} не був видалений, по причині: {}", way_to_selected_item.to_str().unwrap(), error);
                             }
                         }
                     }
@@ -796,15 +905,14 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
 
                 file_with_new_name.push(&file_name.trim());
 
-
-                let rename_result = fs::rename(file.clone(), file_with_new_name);
+                let rename_result = fs::rename(&file, file_with_new_name);
 
                 match rename_result {
                     Ok(_) => {
                         println!("файл {} успішно перейменований на {}", file.display(), file_name);
                     },
                     Err(error) => {
-                        println!("error: {error}");
+                        eprintln!("error: {error}");
                     }
                 }
 
@@ -840,7 +948,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
 
                 selected_item.push(dir_item.path());
 
-                let info = metadata(selected_item.clone());
+                let info = metadata(&selected_item);
 
                 match info {
                     Ok(info) => {
@@ -905,7 +1013,7 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                         }
                     },
                     Err(error) => {
-                        println!("error: {error}");
+                        eprintln!("error: {error}");
                     }
                 }
 
@@ -999,7 +1107,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                                     );
                                 }
                             } else {
-                                if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                if target_directory.selected + 1 < fs::read_dir(&target_directory.path).unwrap().count() {
                                     target_directory.change_selected_dir_or_file(target_directory.selected + 1);
                                     
                                     clear(stdout);
@@ -1017,7 +1125,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                             clear(stdout);
                             target_directory.print_dir_content();
                         } else if key_event.code == KeyCode::Enter {
-                            enter(stdout, target_directory);
+                            enter(stdout, target_directory).unwrap();
                         } else if key_event.code == KeyCode::Esc {
                             target_directory.to_previous_directory();
                             
@@ -1037,7 +1145,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                         }
 
                         if target_directory.fixing_double_click.check_it_is_double_click() {
-                            enter(stdout, target_directory);
+                            enter(stdout, target_directory).unwrap();
                         } else {
                             if target_directory.context_menu.is_open_menu {
                                 if mouse_event.row < target_directory.context_menu.start_context_menu_row ||
@@ -1062,7 +1170,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                                     
                                 }
                             } else {
-                                if mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() {
+                                if mouse_event.row as usize <= fs::read_dir(&target_directory.path).unwrap().count() {
                                     target_directory.change_selected_dir_or_file(mouse_event.row as usize);
                                 }
                             }
@@ -1076,7 +1184,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                         }
                     } else if mouse_event.kind == MouseEventKind::Up(MouseButton::Right) {
                         if !target_directory.context_menu.is_open_menu && 
-                            mouse_event.row as usize <= fs::read_dir(&mut target_directory.path).unwrap().count() &&
+                            mouse_event.row as usize <= fs::read_dir(&target_directory.path).unwrap().count() &&
                             mouse_event.row == target_directory.selected as u16
                         {
                             target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
@@ -1115,7 +1223,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                                 );
                             }
                         } else {
-                            if target_directory.selected + 1 < fs::read_dir(&mut target_directory.path).unwrap().count() {
+                            if target_directory.selected + 1 < fs::read_dir(&target_directory.path).unwrap().count() {
                                 target_directory.change_selected_dir_or_file(target_directory.selected + 1);
 
                                 clear(stdout);
@@ -1131,7 +1239,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
             }
         },
         Some(Err(error)) => {
-            println!("error: {}", error);
+            eprintln!("error: {}", error);
         }
         None => {}
     }
