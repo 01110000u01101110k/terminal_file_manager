@@ -355,20 +355,20 @@ impl TargetDirectory {
 
         match OS {
             "windows" => {
-                let open_file = Command::new("cmd")
+                Command::new("cmd")
                     .args(&[
                         "/C", 
                         "explorer", 
                         self.path.join(dir_item.path()).to_str().unwrap()
                     ])
                     .status()
-                    .expect(format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
+                    .expect(&format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
             },
             "linux" => {
-                let status = Command::new("xdg-open")
+                Command::new("xdg-open")
                     .arg(self.path.join(&dir_item.path()).to_str().unwrap())
                     .status()
-                    .expect(format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
+                    .expect(&format!("could not be opened {}", &dir_item.path().to_str().unwrap()));
             },
             _ => {
                 println!("операційна система не підтримується");
