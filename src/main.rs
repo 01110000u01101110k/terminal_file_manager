@@ -280,21 +280,38 @@ impl FixingDoubleClick {
         self.captured_second_click = true;
     }
 
-    fn check_it_is_double_click(&mut self) -> bool {
-        if self.captured_first_click && self.captured_second_click {
-            match self.result_time_between_clicks {
-                Some(result_time) => {
-                    self.captured_second_click = false;
-                    self.captured_first_click = false;
+    fn released_both_clicks(&mut self) {
+        self.captured_second_click = false;
+        self.captured_first_click = false;
+        self.result_time_between_clicks = None;
+    }
 
-                    if result_time.elapsed() <= self.allowable_time_between_clicks {
-                        return true;
-                    }
-                },
-                None => {
+    fn is_it_expired_time_between_clicks(&mut self) -> bool {
+        match self.result_time_between_clicks {
+            Some(result_time) => {
+                if result_time.elapsed() <= self.allowable_time_between_clicks {
                     return false;
+                } else {
+                    return true;
                 }
+            },
+            None => {
+                return true;
             }
+        }
+    }
+
+    fn check_it_is_double_click(&mut self) -> bool {
+        if self.is_it_expired_time_between_clicks() {
+            self.released_both_clicks();
+
+            return false;
+        }
+
+        if self.captured_first_click && self.captured_second_click {
+            self.released_both_clicks();
+
+            return true;
         }
 
         return false;
@@ -324,8 +341,7 @@ impl TargetDirectory {
         self.path.pop();
 
         self.change_selected_dir_or_file(0);
-        self.fixing_double_click.captured_second_click = false;
-        self.fixing_double_click.captured_first_click = false;
+        self.fixing_double_click.released_both_clicks();
     }
 
     fn to_next_directory(&mut self) {
@@ -337,15 +353,11 @@ impl TargetDirectory {
             self.path.push(dir_item.path());
 
             self.change_selected_dir_or_file(0);
-
-            self.fixing_double_click.captured_second_click = false;
-            self.fixing_double_click.captured_first_click = false;
         } else {
             self.open_file();
-
-            self.fixing_double_click.captured_second_click = false;
-            self.fixing_double_click.captured_first_click = false;
         }
+
+        self.fixing_double_click.released_both_clicks();
     }
 
     fn open_file(&self) {
@@ -1071,6 +1083,12 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
 async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, target_directory: &mut TargetDirectory) -> Result<()> {
     match event_stream.next().await {
         Some(Ok(event)) => {
+            if target_directory.fixing_double_click.captured_first_click && 
+                target_directory.fixing_double_click.is_it_expired_time_between_clicks() 
+            {
+                target_directory.fixing_double_click.released_both_clicks();
+            }
+
             match event {
                 Event::Key(key_event) => {
                     if key_event.kind == KeyEventKind::Release {
