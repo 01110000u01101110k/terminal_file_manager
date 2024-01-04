@@ -1224,8 +1224,7 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                         }
                     } else if mouse_event.kind == MouseEventKind::Up(MouseButton::Right) {
                         if !target_directory.context_menu.is_open_menu && 
-                            mouse_event.row as usize <= fs::read_dir(&target_directory.path).unwrap().count() &&
-                            mouse_event.row == target_directory.selected as u16
+                            mouse_event.row as usize <= fs::read_dir(&target_directory.path).unwrap().count()
                         {
                             target_directory.context_menu.print_context_menu(mouse_event.column, mouse_event.row);
                         }
