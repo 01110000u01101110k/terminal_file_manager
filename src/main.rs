@@ -402,24 +402,34 @@ impl TargetDirectory {
     fn print_dir_content(&self) {
         let dir_content = fs::read_dir(&self.path);
 
+        let mut starting_point = 0;
+        let mut terminal_size = crossterm::terminal::size().unwrap();
+
+        if self.selected >= (terminal_size.1 - 1) as usize {
+            starting_point = self.selected;
+            terminal_size.1 += self.selected as u16;
+        } 
+
         match dir_content {
             Ok(content) => {
                 for entry in content.enumerate() { // todo - зробити більш гарний "ui", щось накшталт того як зробив контекстне меню (також додати якихось бордерів чи щось таке)
                     if let (index, Ok(entry)) = entry {
-                        if index == self.selected {
-                            execute!(
-                                stdout(),
-                                SetColors(Colors::new(Black, Green))
-                            ).unwrap();
-        
-                            println!("{}", entry.file_name().to_str().unwrap());
-        
-                            execute!(
-                                stdout(),
-                                ResetColor
-                            ).unwrap();
-                        } else {
-                            println!("{}", entry.file_name().to_str().unwrap());
+                        if index >= starting_point && index < (terminal_size.1 - 1) as usize {
+                            if index == self.selected {
+                                execute!(
+                                    stdout(),
+                                    SetColors(Colors::new(Black, Green))
+                                ).unwrap();
+            
+                                println!("{}", entry.file_name().to_str().unwrap());
+            
+                                execute!(
+                                    stdout(),
+                                    ResetColor
+                                ).unwrap();
+                            } else {
+                                println!("{}", entry.file_name().to_str().unwrap());
+                            }   
                         }
                     }
                 }
@@ -442,13 +452,14 @@ impl TargetDirectory {
 }
 
 fn clear(stdout: &mut Stdout) {
-    execute!(
+    /*execute!(
         stdout,
         Clear(ClearType::All), // todo - виправити використання двох типів очищення одночасно (якщо використовувати один з них нормального очищення на Windows не відбувається)
         Clear(ClearType::Purge),
         RestorePosition,
-    ).unwrap();
+    ).unwrap();*/
 
+    clearscreen::clear().unwrap();
 }
 
 fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<()> {
@@ -1189,7 +1200,13 @@ async fn keyboard_events(stdout: &mut Stdout, event_stream: &mut EventStream, ta
                                 }
                             } else {
                                 if mouse_event.row as usize <= fs::read_dir(&target_directory.path).unwrap().count() {
-                                    target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                                    let terminal_size = crossterm::terminal::size().unwrap();
+                                    
+                                    if target_directory.selected > (terminal_size.1 - 1) as usize {
+                                        target_directory.change_selected_dir_or_file((target_directory.selected + mouse_event.row as usize) as usize);
+                                    } else {
+                                        target_directory.change_selected_dir_or_file(mouse_event.row as usize);
+                                    }
                                 }
                             }
                         }

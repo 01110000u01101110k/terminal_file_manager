@@ -12,3 +12,4 @@ futures-timer = "3.0.2"
 tokio = { version = "1.33.0", features = ["full"] }
 chrono = {version = "0.4.31", features = ["clock"]}
 clipboard = "0.5.0"
+clearscreen = "2.0.1"
