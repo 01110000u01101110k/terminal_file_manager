@@ -485,75 +485,78 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     let mut entered = String::new();
                     stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
 
-                    let dir = fs::read_dir(&dir_item.path()).unwrap();
-                    
-                    let mut folder_hierarchy: Vec<(i32, PathBuf)> = Vec::new();
+                    if entered.trim() == "yes" || entered.trim() == "y" {
+                        let dir = fs::read_dir(&dir_item.path()).unwrap();
+                        
+                        let mut folder_hierarchy: Vec<(i32, PathBuf)> = Vec::new();
 
-                    let position_in_hierarchy = 0;
+                        let position_in_hierarchy = 0;
 
-                    find_folders_and_delete_files_inside(dir, position_in_hierarchy, &mut folder_hierarchy);
+                        find_folders_and_delete_files_inside(dir, position_in_hierarchy, &mut folder_hierarchy);
 
-                    fn find_folders_and_delete_files_inside(dir_content: fs::ReadDir, position_in_hierarchy: i32, folder_hierarchy: &mut Vec<(i32, PathBuf)>) {
-                        for dir_item in dir_content {
-                            match dir_item {
-                                Ok(dir_item) => {
-                                    if dir_item.path().is_dir() {
-                                        folder_hierarchy.push((position_in_hierarchy, dir_item.path()));
+                        fn find_folders_and_delete_files_inside(dir_content: fs::ReadDir, position_in_hierarchy: i32, folder_hierarchy: &mut Vec<(i32, PathBuf)>) {
+                            for dir_item in dir_content {
+                                match dir_item {
+                                    Ok(dir_item) => {
+                                        if dir_item.path().is_dir() {
+                                            folder_hierarchy.push((position_in_hierarchy, dir_item.path()));
 
-                                        match fs::read_dir(dir_item.path()) {
-                                            Ok(item) => {
-                                                find_folders_and_delete_files_inside(item, position_in_hierarchy + 1, folder_hierarchy);
-                                            },
-                                            Err(error) => {
-                                                eprintln!("error: {}", error);
+                                            match fs::read_dir(dir_item.path()) {
+                                                Ok(item) => {
+                                                    find_folders_and_delete_files_inside(item, position_in_hierarchy + 1, folder_hierarchy);
+                                                },
+                                                Err(error) => {
+                                                    eprintln!("error: {}", error);
+                                                }
+                                            }
+                                        } else {
+                                            let remove_file = remove_file(dir_item.path().to_str().unwrap());
+
+                                            match remove_file {
+                                                Ok(_) => {
+                                                    println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
+                                                },
+                                                Err(error) => {
+                                                    eprintln!("error: {}", error);
+                                                }
                                             }
                                         }
-                                    } else {
-                                        let remove_file = remove_file(dir_item.path().to_str().unwrap());
-
-                                        match remove_file {
-                                            Ok(_) => {
-                                                println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
-                                            },
-                                            Err(error) => {
-                                                eprintln!("error: {}", error);
-                                            }
-                                        }
+                                    },
+                                    Err(error) => {
+                                        eprintln!("error: {}", error);
                                     }
-                                },
-                                Err(error) => {
-                                    eprintln!("error: {}", error);
                                 }
                             }
                         }
-                    }
 
-                    folder_hierarchy.sort_by(|a, b| b.0.cmp(&a.0));
+                        folder_hierarchy.sort_by(|a, b| b.0.cmp(&a.0));
 
-                    folder_hierarchy.into_iter().for_each(|item| {
-                        let remove_dir = remove_dir(&item.1);
+                        folder_hierarchy.into_iter().for_each(|item| {
+                            let remove_dir = remove_dir(&item.1);
 
-                        match remove_dir {
+                            match remove_dir {
+                                Ok(_) => {
+                                    println!("папка {} була видалена", &item.1.to_str().unwrap());
+                                },
+                                Err(error) => {
+                                    eprintln!("папка {} не була видалена, по причині: {}", &item.1.to_str().unwrap(), error);
+                                }
+                            }
+                        });
+
+                        let remove_main_selected_dir = remove_dir(&dir_item.path());
+
+                        match remove_main_selected_dir {
                             Ok(_) => {
-                                println!("папка {} була видалена", &item.1.to_str().unwrap());
+                                println!("папка {} була видалена", &dir_item.path().to_str().unwrap());
                             },
                             Err(error) => {
-                                eprintln!("папка {} не була видалена, по причині: {}", &item.1.to_str().unwrap(), error);
+                                eprintln!("папка {} не була видалена, по причині: {}", &dir_item.path().to_str().unwrap(), error);
                             }
                         }
-                    });
 
-                    let remove_main_selected_dir = remove_dir(&dir_item.path());
-
-                    match remove_main_selected_dir {
-                        Ok(_) => {
-                            println!("папка {} була видалена", &dir_item.path().to_str().unwrap());
-                        },
-                        Err(error) => {
-                            eprintln!("папка {} не була видалена, по причині: {}", &dir_item.path().to_str().unwrap(), error);
-                        }
+                        sleep(Duration::from_millis(2000));
                     }
-
                 } else {
                     print!("ви дійсно хочете видалити файл {}? Введіть 'yes' або 'no'.", &dir_item.file_name().to_str().unwrap());
                     std::io::stdout().flush().expect("Помилка при очищенні буфера");
@@ -561,23 +564,25 @@ fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<
                     let mut entered = String::new();
                     stdin().read_line(&mut entered).expect("something went wrong when writing the name of directory");
                     
-                    let remove_file = remove_file(dir_item.path().to_str().unwrap());
+                    if entered.trim() == "yes" || entered.trim() == "y" {
+                        let remove_file = remove_file(dir_item.path().to_str().unwrap());
 
-                    match remove_file {
-                        Ok(_) => {
-                            clear(stdout);
-                            println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
-                        },
-                        Err(error) => {
-                            clear(stdout);
-                            eprintln!("error: {}", error);
+                        match remove_file {
+                            Ok(_) => {
+                                clear(stdout);
+                                println!("файл {} був успішно видалений", &dir_item.file_name().to_str().unwrap());
+                            },
+                            Err(error) => {
+                                clear(stdout);
+                                eprintln!("error: {}", error);
+                            }
                         }
+
+                        sleep(Duration::from_millis(2000));
                     }
                 }
 
                 target_directory.context_menu.is_open_menu = false;
-
-                sleep(Duration::from_millis(2000));
 
                 execute!(
                     stdout,
