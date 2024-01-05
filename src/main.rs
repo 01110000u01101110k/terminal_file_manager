@@ -2,8 +2,6 @@ use futures::{future::FutureExt, select, StreamExt};
 
 use crossterm::execute;
 use crossterm::event::EventStream;
-use crossterm::terminal::Clear;
-use crossterm::terminal::ClearType;
 use crossterm::cursor::MoveTo;
 use crossterm::event::EnableMouseCapture;
 use crossterm::event::DisableMouseCapture;
@@ -39,17 +37,7 @@ use std::time::Duration;
 
 use terminal_file_manager::context_menu::{ContextMenuItems};
 use terminal_file_manager::target_directory::{TargetDirectory};
-
-fn clear(stdout: &mut Stdout) {
-    /*execute!(
-        stdout,
-        Clear(ClearType::All), // todo - виправити використання двох типів очищення одночасно (якщо використовувати один з них нормального очищення на Windows не відбувається)
-        Clear(ClearType::Purge),
-        RestorePosition,
-    ).unwrap();*/
-
-    clearscreen::clear().unwrap();
-}
+use terminal_file_manager::clear::*;
 
 fn enter(stdout: &mut Stdout, target_directory: &mut TargetDirectory) -> Result<()> {
     if target_directory.context_menu.is_open_menu {
