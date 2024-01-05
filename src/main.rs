@@ -1,6 +1,5 @@
 use futures::{future::FutureExt, select, StreamExt};
 
-use crossterm::cursor::RestorePosition;
 use crossterm::execute;
 use crossterm::event::EventStream;
 use crossterm::style::ResetColor;
@@ -19,13 +18,6 @@ use crossterm::cursor::Show;
 use crossterm::event::KeyEventKind;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
-use crossterm::terminal::BeginSynchronizedUpdate;
-use crossterm::terminal::EndSynchronizedUpdate;
-use crossterm::terminal::SetSize;
-use crossterm::style::SetStyle;
-use crossterm::style::ContentStyle;
-use crossterm::style::Attributes;
-use crossterm::style::Attribute;
 
 use chrono::DateTime;
 use chrono::offset::Local;
@@ -38,7 +30,6 @@ use std::{io::Result, io::stdout, io::Stdout};
 use std::path::Path;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::string::ToString;
 use std::io::stdin;
 use std::fs::File;
 use std::fs::create_dir;
@@ -47,76 +38,11 @@ use std::fs::remove_file;
 use std::fs::metadata;
 use std::thread::sleep;
 use std::time::Duration;
-use std::time::Instant;
 use std::process::Command;
 use std::env::consts::OS;
 
 use terminal_file_manager::context_menu::{ContextMenuItems, ContextMenu};
-
-
-struct FixingDoubleClick {
-    allowable_time_between_clicks: Duration,
-    captured_first_click: bool,
-    captured_second_click: bool,
-    result_time_between_clicks: Option<Instant>
-}
-
-impl FixingDoubleClick {
-    fn new() -> Self {
-        Self {
-            allowable_time_between_clicks: Duration::from_millis(500),
-            captured_first_click: false,
-            captured_second_click: false,
-            result_time_between_clicks: None
-        }
-    }
-
-    fn first_click(&mut self) {
-        self.result_time_between_clicks = Some(Instant::now());
-        self.captured_first_click = true;
-    }
-
-    fn second_click(&mut self) {
-        self.captured_second_click = true;
-    }
-
-    fn released_both_clicks(&mut self) {
-        self.captured_second_click = false;
-        self.captured_first_click = false;
-        self.result_time_between_clicks = None;
-    }
-
-    fn is_it_expired_time_between_clicks(&mut self) -> bool {
-        match self.result_time_between_clicks {
-            Some(result_time) => {
-                if result_time.elapsed() <= self.allowable_time_between_clicks {
-                    return false;
-                } else {
-                    return true;
-                }
-            },
-            None => {
-                return true;
-            }
-        }
-    }
-
-    fn check_it_is_double_click(&mut self) -> bool {
-        if self.is_it_expired_time_between_clicks() {
-            self.released_both_clicks();
-
-            return false;
-        }
-
-        if self.captured_first_click && self.captured_second_click {
-            self.released_both_clicks();
-
-            return true;
-        }
-
-        return false;
-    }
-}
+use terminal_file_manager::double_click_fixation::{FixingDoubleClick};
 
 struct TargetDirectory {
     path: PathBuf,
